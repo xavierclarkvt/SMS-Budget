@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# data folder (filled with CSVs from users)
+data/*
+
+# temp files (mainly report pie charts)
+static/*
