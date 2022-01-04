@@ -7,5 +7,3 @@ TODO: add `requirements.txt` (may not be able to use `pip freeze`) (see this lin
 
 Create a TwiML app first, and then set up a webhook for the specific phone number
 Authorize the phone number and set up a webhook for that phone number in twilio
-
-https://github.com/jpillora/node-google-sheets needed for connecting node to gsheets

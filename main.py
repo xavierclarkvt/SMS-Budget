@@ -34,11 +34,18 @@ def incoming_sms():
             addEntry(splitMessage, date, path, resp)
         elif splitMessage[0] == 'undo': # undo last add (TODO: add confirmation)
             undoLastEntry(path, resp)
-        elif splitMessage[0] == 'report' or splitMessage[0] == 'rep':
-            if len(splitMessage) > 1:
-                pass
+        elif splitMessage[0] == 'report' or splitMessage[0] == 'rep': # create report of spending
+            if len(splitMessage) > 1: # custom year or last month chosen
+                repMonth = '-1'
+                if splitMessage[1] == 'last': # get last month's data
+                    repDate = date - datetime.timedelta(weeks = 4)
+                    splitMessage[1] = str(repDate.year)
+                    print(repDate)
+                    repMonth = str(repDate.month)
+                newPath = "./data/" + userNum + "_" + splitMessage[1] + ".csv"  # filepath to csv file for specific user
+                createReport(repMonth, userNum, newPath, resp)
             else:
-                createReport(date, userNum, path, resp)
+                createReport(str(date.month), userNum, path, resp)
         elif splitMessage[0] == 'aid':
             pass #print help message
 
@@ -54,7 +61,7 @@ def incoming_sms():
 
 
 def addEntry(splitMessage, date, path, resp):
-    """AddEntry - add a spending entry to the user's csv file.
+    """Add a spending entry to the user's csv file.
 
     Args:
         splitMessage (String[]): The message the user sent seperated into an array by spaces
@@ -72,14 +79,21 @@ def addEntry(splitMessage, date, path, resp):
     month = date.month
     day = date.day
 
+    categoryTotal = float(amt)
+
     # writing to csv file
-    with open(path, 'a') as csvfile:
-        # creating a csv writer object, write headers to top
+    with open(path, 'r+') as csvfile:
+        for row in csv.reader(csvfile):
+            print(row)
+            if row[0] == month and row[3] == category:
+                print("^chosen^")
+                categoryTotal += row[2]
+        # creating a csv writer object, write new entry at bottom
         csv.writer(csvfile).writerow([month, day, amt, category, description])
         csvfile.close()
 
     # TODO: maybe add words of affirmation if spending on good things or staying under a budget
-    resp.message('${0} spent on {1}\n\n${2} spent on {1} in total this month'.format(amt, category, '[NEED TO ADD]')) #TODO: make get spending for category for month
+    resp.message('${:s} spent on {:s}\n\n${:.2f} spent on {:s} in total this month'.format(amt, category, categoryTotal, category)) 
 
 
 
@@ -89,7 +103,7 @@ def undoLastEntry(path, resp):
 
     Args:
         path ([type]): [description]
-        resp ([type]): [description]
+        resp (XML): Twilio TwiML MessagingResponse object for the response text
     """
     lastLine = None
 
@@ -127,15 +141,43 @@ def undoLastEntry(path, resp):
                                                                             # TODO: NEED TO NOT ALLOW DELETING HEADER LINE
 
 
+def createReport(month, userNum, path, resp):
+    """Create a user's spending report for a specific month, for a specific year. 
+    Also generate a PNG of a pie chart with matplotlib to send to the user, if entries for the given month are found.
+    If no entries are found, or PATH doesn't exist, return an error message
 
-def createReport(date, userNum, path, resp):
+    When preparing the pie chart, places any categories with a total amt less than 3% of the total spent into "Other" category.
+    This makes the pie chart slightly cleaner.
+
+    Unfortunately, needs to step though every line (so may be a little resource intensive)
+
+    Args:
+        month (String)): The month you'd like to get data for. 
+                        If a negative number, gather data for the whole year (entire csv data) 
+        userNum (String): User's iso phone number string, used in filename for pie chart png
+        path (String): The path to the CSV you'd like to report over. Year is defined by the csv file PATH is pointing to. 
+        resp (XML): Twilio TwiML MessagingResponse object for the response text
+    """
+    print(month)
+    print(userNum)
+    print(path)
+    print(resp)
+
     # Break up the month by category
-    month = str(date.month)
     runningTotal = {}
     totalSpent = 0.0
+
+    if not os.path.exists(path): # file doesn't exist - only happens if year chosen doesn't exist
+        resp.message("It seems like there are no entries for that year. Try again?")
+        return
+
     with open(path, "r") as csvfile:
-        for row in csv.reader(csvfile):
-            if row[0] == month:
+        csvReader = csv.reader(csvfile)
+        next(csvReader)
+        for row in csvReader:
+            print(runningTotal)
+            print(row)
+            if int(month) < 0 or row[0] == month:
                 amt = float(row[2])
                 if not row[3] in runningTotal: # if category not already seen, create new entry
                     runningTotal[row[3]] = amt 
@@ -143,23 +185,42 @@ def createReport(date, userNum, path, resp):
                     runningTotal[row[3]] += amt 
                 totalSpent += amt
         csvfile.close()
+    
+    if len(runningTotal) == 0: # no entries for that month, return an error message
+        print(runningTotal)
+        resp.message("It seems like there are no entries for that month. Are you sure you meant " + str(month) + "?")
+        return
+
 
     # create the response string
-    # TODO: Maybe make have an "other" catagory for anything that doesn't end up being a full 2% of the total
     # also create pie chart for mms
     labels = []
     values = []
+    otherTotal = 0.0
     piePath = "/static/" + userNum + "_pie.png"
-    responseString = "This month you spent ${:.2f}, consisting of:\n".format(totalSpent)
+
+    dateRange = 'month' # change text based on selection
+    if int(month) < 0:
+        dateRange = 'year'
+
+    responseString = "This {:s} you spent ${:.2f}, consisting of:\n".format(dateRange, totalSpent)
     for k,v in runningTotal.items():   
-        responseString += "${:.2f} on {:s}\n".format(v, k)
-        labels.append(k)
-        values.append(v)
+        responseString += "\t* ${:.2f} on {:s}\n".format(v, k)
+        if v < (0.03 * totalSpent):
+            otherTotal += v
+        else:
+            labels.append(k)
+            values.append(v)
+
+    if otherTotal > 0: # if there were values placed into the "other" category
+        labels.append('other')
+        values.append(otherTotal)
         
-    plt.clf() # clear previous pie chart (if there is one)
+    # Create pie chart as png
     plt.pie(values, labels=labels, textprops={"fontsize":20, "fontweight":"bold"}, autopct='%.1f%%') # TODO: Style better (?)
-    plt.axis('equal')
-    plt.savefig("." + piePath)
+    plt.axis('equal') # needed to make the pie chart a circle
+    plt.savefig("." + piePath) # save as png
+    plt.clf() # clear previous pie chart (if there is one)
 
     msg = resp.message(responseString)
     msg.media(piePath)
